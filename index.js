@@ -1,9 +1,8 @@
-require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!token) {
-  console.error('Error: TELEGRAM_BOT_TOKEN is not set in the environment.\nCreate a .env file or set the variable and restart the bot.');
+const token = '8819641089:AAHbttHKDYAXakHng_XubDowKZJHo6jTAHE';
+if (!token || token === 'YOUR_TELEGRAM_BOT_TOKEN') {
+  console.error('Error: Telegram bot token is missing. Please add your token in index.js.');
   process.exit(1);
 }
 
@@ -28,7 +27,7 @@ bot.action('profile', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     const user = ctx.from || {};
-    const profileText = `👤 Profile\n\nName: ${user.first_name || 'John'} ${user.last_name || ''}\nUsername: ${user.username ? '@' + user.username : 'N/A'}\nID: ${user.id || 'N/A'}\nStatus: Premium (demo)`;
+    const profileText = `👤 Profile\n\nName: ${user.first_name || 'John'} ${user.last_name || ''}\nUsername: ${user.username ? '@' + user.username : 'N/A'}\nID: ${user.id || 'N/A'}\nStatus: Premium Demo User\nRole: Telegram Bot User`;
     await ctx.editMessageText(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('🔄 Refresh', 'refresh_profile'), Markup.button.callback('⬅️ Back', 'back')]
     ]));
@@ -42,7 +41,7 @@ bot.action('refresh_profile', async (ctx) => {
     await ctx.answerCbQuery('Profile refreshed');
     // simple refresh behavior: re-run profile handler
     const user = ctx.from || {};
-    const profileText = `👤 Profile\n\nName: ${user.first_name || 'John'} ${user.last_name || ''}\nUsername: ${user.username ? '@' + user.username : 'N/A'}\nID: ${user.id || 'N/A'}\nStatus: Premium (demo)\nUpdated: ${new Date().toLocaleString()}`;
+    const profileText = `👤 Profile\n\nName: ${user.first_name || 'John'} ${user.last_name || ''}\nUsername: ${user.username ? '@' + user.username : 'N/A'}\nID: ${user.id || 'N/A'}\nStatus: Premium Demo User\nRole: Telegram Bot User`;
     await ctx.editMessageText(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('🔄 Refresh', 'refresh_profile'), Markup.button.callback('⬅️ Back', 'back')]
     ]));
