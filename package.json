@@ -1,12 +1,16 @@
 {
-  "name": "telegram-inline-bot",
+  "name": "telegram-deriv-bot",
   "version": "1.0.0",
-  "description": "A demo Telegram bot with advanced inline buttons and callback editing (Node.js + Telegraf)",
+  "description": "Telegram bot for secure Deriv OAuth account linking",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
-  "keywords": ["telegram", "bot", "telegraf", "inline-buttons"],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "keywords": ["telegram", "bot", "deriv", "oauth"],
   "author": "Bilzman247",
   "license": "MIT",
   "dependencies": {

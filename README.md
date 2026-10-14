@@ -1,270 +1,74 @@
-require('dotenv').config();
-const { Telegraf, Markup } = require('telegraf');
+# Telegram Deriv Account Bot
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!token) {
-  console.error('Missing TELEGRAM_BOT_TOKEN in your environment.\nCreate a .env file and add: TELEGRAM_BOT_TOKEN=your_token_here');
-  process.exit(1);
-}
+This project replaces the old dashboard demo with a Telegram-only bot for securely connecting a user's Deriv account. It does not include a web app or dashboard. Live trading and all trading commands are intentionally disabled until a strategy and risk limits are separately specified and reviewed.
 
-const bot = new Telegraf(token, {
-  handlerTimeout: 10000,
-});
+## What it does
 
-const escapeHtml = (value = '') =>
-  String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+- Starts a Deriv OAuth 2.0 authorization-code flow with PKCE and a fresh, single-use `state` bound to the Telegram user.
+- Uses the official Deriv OAuth endpoints:
+  - Authorization: `https://auth.deriv.com/oauth2/auth`
+  - Token exchange: `https://auth.deriv.com/oauth2/token`
+- Handles the fixed callback `https://g-squad.buzz/oauth/callback`.
+- Stores access and (when returned by Deriv) refresh tokens encrypted with AES-256-GCM in SQLite. The encryption key is supplied separately through the environment.
+- Offers `/connect`, `/status`, `/disconnect`, and `/help` in Telegram.
+- Runs a Telegram webhook and the OAuth callback on the same minimal HTTP backend, protected by a webhook secret, rate limits, and HTTPS enforcement.
 
-const getDisplayName = (user = {}) => {
-  const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ');
-  return fullName || user.username || 'User';
-};
+The bot never asks for a Deriv password and never sends tokens or authorization codes through Telegram. The callback page contains only a generic result.
 
-const balanceValue = () => {
-  const base = 1250 + Math.random() * 800;
-  return (base + Math.random() * 100).toFixed(2);
-};
+## Configure Deriv and Telegram
 
-const statValue = () => {
-  const base = 32 + Math.random() * 50;
-  return Math.round(base).toString();
-};
+1. Register an OAuth application with Deriv. Register this redirect URI **exactly**:
 
-const mainMenu = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.callback('👤 Profile', 'profile'), Markup.button.callback('💳 Balance', 'balance')],
-    [Markup.button.callback('📊 Stats', 'stats'), Markup.button.callback('❓ Help', 'help')],
-  ]);
+   `https://g-squad.buzz/oauth/callback`
 
-const homeCard = (user) => {
-  const name = escapeHtml(getDisplayName(user));
-  return `
-✨ <b>Welcome back, ${name}</b>
+2. Use only the scopes configured for that application. Set `DERIV_OAUTH_SCOPES` to those exact scopes; the bot does not guess permissions.
+3. Create a Telegram bot with BotFather and obtain its bot token.
+4. Configure DNS for `g-squad.buzz` and terminate HTTPS with a trusted reverse proxy (for example, Caddy or Nginx). Proxy these paths to the bot:
+   - `/oauth/callback`
+   - `/telegram/webhook`
+5. Keep the Node process bound to localhost behind that proxy. The proxy must overwrite `X-Forwarded-Proto` with `https` and `X-Forwarded-For` with the client IP; do not expose the backend port publicly.
+6. Redact query strings from reverse-proxy access logs for `/oauth/callback`. The callback immediately redirects to a clean URL, but OAuth providers return the one-time authorization code in the callback query.
 
-Your digital dashboard is ready. Select an action below to continue.
-  `.trim();
-};
+## Install and run
 
-const profileCard = (user) => {
-  const name = escapeHtml(getDisplayName(user));
-  const username = user.username ? `@${escapeHtml(user.username)}` : 'Not set';
-  const id = user.id || 'Unknown';
+Use Node.js 22.13 or later (the project uses Node's built-in SQLite module).
 
-  return `
-👤 <b>Profile</b>
+```sh
+npm install
+cp .env.example .env
+```
 
-<b>Name:</b> ${name}
-<b>Username:</b> ${username}
-<b>User ID:</b> <code>${id}</code>
-<b>Status:</b> Premium Access
-<b>Member:</b> ${new Date().toLocaleDateString()}
-  `.trim();
-};
+Set the following in `.env`:
 
-const balanceCard = () => {
-  const amount = balanceValue();
-  const pending = (Math.random() * 80 + 25).toFixed(2);
+- `TELEGRAM_BOT_TOKEN`: BotFather token.
+- `TELEGRAM_WEBHOOK_SECRET`: random value using only letters, digits, `_` or `-` (for example, generate one with `openssl rand -hex 32`).
+- `DERIV_CLIENT_ID`: client ID from the Deriv OAuth application.
+- `DERIV_OAUTH_SCOPES`: exact, space-separated scopes registered for the app.
+- `TOKEN_ENCRYPTION_KEY`: a fresh 32-byte key encoded as base64; generate it with `openssl rand -base64 32`.
+- `PUBLIC_BASE_URL`: must remain `https://g-squad.buzz`.
+- `TRUST_PROXY=true`: only when the process is reachable exclusively through the trusted HTTPS reverse proxy.
 
-  return `
-💳 <b>Wallet</b>
+Start the bot:
 
-<b>Available:</b> <code>$${amount}</code>
-<b>Pending:</b> <code>$${pending}</code>
-<b>Currency:</b> USD
+```sh
+npm start
+```
 
-<i>Demo balance for UI preview only.</i>
-  `.trim();
-};
+At startup, the bot verifies that the public HTTPS callback and webhook routes actually reach this backend before registering `https://g-squad.buzz/telegram/webhook` with Telegram using `TELEGRAM_WEBHOOK_SECRET`. A default hosting placeholder or an incorrectly routed proxy will fail startup rather than silently acknowledge and drop Telegram updates. `PORT`, `BIND_HOST`, and `DATABASE_PATH` may be adjusted for deployment; keep the database directory private and backed up securely. Losing `TOKEN_ENCRYPTION_KEY` makes stored credentials unusable.
 
-const statsCard = () => {
-  const streak = statValue();
-  const rewards = statValue();
-  const tasks = statValue();
+## Account disconnect and revocation
 
-  return `
-📊 <b>Performance</b>
+`/disconnect` deletes the bot's encrypted local credentials. The current Deriv OAuth documentation describes delegated tokens and account-level revocation but does not document a token-revocation endpoint or request parameters. To avoid inventing an endpoint, this bot does not claim to revoke the Deriv grant remotely; users should revoke the connected app in their Deriv account settings as well.
 
-<b>Daily streak:</b> ${streak} days
-<b>Rewards:</b> ${rewards} pts
-<b>Tasks done:</b> ${tasks}
-<b>Rank:</b> Gold Tier
-  `.trim();
-};
+Refresh-token grant requests are made only if Deriv returns a refresh token. An invalid/expired refresh grant requires the user to connect again. An expired or rejected authorization code, a declined authorization, invalid state, and token-exchange failures do not link an account.
 
-const helpCard = () => `
-❓ <b>Help</b>
+## Tests
 
-Use the buttons below to explore your profile, wallet, and stats.
-All data is a demo for styling and callback interaction.
-`.trim();
+```sh
+npm test
+```
 
-const profileButtons = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.callback('🔄 Refresh', 'refresh_profile'), Markup.button.callback('⬅️ Back', 'home')],
-  ]);
+OAuth references:
 
-const balanceButtons = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.callback('🔄 Refresh', 'refresh_balance'), Markup.button.callback('⬅️ Back', 'home')],
-    [Markup.button.callback('💸 Withdraw', 'withdraw')],
-  ]);
-
-const statsButtons = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.callback('⬅️ Back', 'home')],
-  ]);
-
-const helpButtons = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.callback('⬅️ Back', 'home')],
-  ]);
-
-const homeButtons = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.callback('👤 Profile', 'profile'), Markup.button.callback('💳 Balance', 'balance')],
-    [Markup.button.callback('📊 Stats', 'stats'), Markup.button.callback('❓ Help', 'help')],
-  ]);
-
-bot.telegram.setMyCommands([
-  { command: 'start', description: 'Open dashboard' },
-  { command: 'menu', description: 'Show main menu' },
-]);
-
-bot.command('start', async (ctx) => {
-  await ctx.replyWithHTML(homeCard(ctx.from), homeButtons());
-});
-
-bot.command('menu', async (ctx) => {
-  await ctx.replyWithHTML(homeCard(ctx.from), homeButtons());
-});
-
-bot.action('home', async (ctx) => {
-  try {
-    await ctx.answerCbQuery('Dashboard opened');
-    await ctx.editMessageText(homeCard(ctx.from), {
-      parse_mode: 'HTML',
-      reply_markup: homeButtons(),
-    });
-  } catch (err) {
-    console.error('home action error:', err);
-  }
-});
-
-bot.action('profile', async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(profileCard(ctx.from), {
-      parse_mode: 'HTML',
-      reply_markup: profileButtons(),
-    });
-  } catch (err) {
-    console.error('profile action error:', err);
-  }
-});
-
-bot.action('refresh_profile', async (ctx) => {
-  try {
-    await ctx.answerCbQuery('Profile refreshed');
-    await ctx.editMessageText(profileCard(ctx.from), {
-      parse_mode: 'HTML',
-      reply_markup: profileButtons(),
-    });
-  } catch (err) {
-    console.error('refresh_profile action error:', err);
-  }
-});
-
-bot.action('balance', async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(balanceCard(), {
-      parse_mode: 'HTML',
-      reply_markup: balanceButtons(),
-    });
-  } catch (err) {
-    console.error('balance action error:', err);
-  }
-});
-
-bot.action('refresh_balance', async (ctx) => {
-  try {
-    await ctx.answerCbQuery('Balance updated');
-    await ctx.editMessageText(balanceCard(), {
-      parse_mode: 'HTML',
-      reply_markup: balanceButtons(),
-    });
-  } catch (err) {
-    console.error('refresh_balance action error:', err);
-  }
-});
-
-bot.action('stats', async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(statsCard(), {
-      parse_mode: 'HTML',
-      reply_markup: statsButtons(),
-    });
-  } catch (err) {
-    console.error('stats action error:', err);
-  }
-});
-
-bot.action('help', async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(helpCard(), {
-      parse_mode: 'HTML',
-      reply_markup: helpButtons(),
-    });
-  } catch (err) {
-    console.error('help action error:', err);
-  }
-});
-
-bot.action('withdraw', async (ctx) => {
-  try {
-    await ctx.answerCbQuery('Demo action only');
-    await ctx.editMessageText(
-      '💸 <b>Withdraw</b>\n\nThis is a design demo only. No real funds are transferred.',
-      {
-        parse_mode: 'HTML',
-        reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback('⬅️ Back', 'home')],
-        ]),
-      }
-    );
-  } catch (err) {
-    console.error('withdraw action error:', err);
-  }
-});
-
-bot.on('callback_query', async (ctx) => {
-  try {
-    await ctx.answerCbQuery('Processing...');
-  } catch (err) {
-    console.error('callback fallback error:', err);
-  }
-});
-
-bot.on('message', async (ctx) => {
-  if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/')) {
-    return;
-  }
-
-  await ctx.replyWithHTML(homeCard(ctx.from), homeButtons());
-});
-
-bot.launch().then(() => {
-  console.log('Telegram bot is running successfully.');
-}).catch((err) => {
-  console.error('Bot failed to start:', err);
-  process.exit(1);
-});
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+- [Deriv OAuth 2.0 guide](https://developers.deriv.com/docs/intro/oauth/)
+- [Deriv authentication overview](https://developers.deriv.com/docs/intro/authentication/)
